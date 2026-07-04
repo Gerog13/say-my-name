@@ -42,16 +42,16 @@ export function useGameActions() {
   }, [session])
 
   const advanceLightning = useCallback(() => {
-    if (session) void game.advanceLightningCard(session)
-  }, [session])
+    if (session) void game.advanceLightningCard(session, teams, players)
+  }, [session, teams, players])
 
   const nextTurn = useCallback(() => {
     if (session) void game.nextTurn(session, teams, players)
   }, [session, teams, players])
 
   const nextPhase = useCallback(() => {
-    if (session) void game.nextPhaseOrFinish(session)
-  }, [session])
+    if (session) void game.nextPhaseOrFinish(session, teams, players)
+  }, [session, teams, players])
 
   return {
     session,

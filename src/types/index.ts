@@ -63,6 +63,7 @@ export interface Player {
   isHost: boolean
   correctCount: number
   lastSeen: string
+  createdAt: string
 }
 
 export interface Card {
@@ -100,7 +101,7 @@ export const PHASE_META: Record<
     label: 'Ronda 2 · Una palabra',
     short: '1 palabra',
     emoji: '☝️',
-    rules: ['Solo UNA palabra', 'Actuar permitido', 'Un intento por carta'],
+    rules: ['Solo UNA palabra', 'No puede ser la palabra prohibida', 'Un intento por carta'],
   },
   lightning: {
     label: 'Ronda Relámpago',

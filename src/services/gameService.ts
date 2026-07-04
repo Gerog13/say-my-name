@@ -52,14 +52,23 @@ export async function renameTeam(teamId: string, name: string): Promise<void> {
   await supabase.from('teams').update({ name }).eq('id', teamId)
 }
 
+function teamMembers(players: Player[], teamId: string): Player[] {
+  return players
+    .filter((p) => p.teamId === teamId && p.connected)
+    .sort((a, b) => {
+      if (a.createdAt !== b.createdAt) return a.createdAt < b.createdAt ? -1 : 1
+      return a.id < b.id ? -1 : 1
+    })
+}
+
 function firstTeamAndPlayer(
   teams: Team[],
   players: Player[],
 ): { teamId: string | null; playerId: string | null } {
   const ordered = [...teams].sort((a, b) => a.order - b.order)
   for (const team of ordered) {
-    const member = players.find((p) => p.teamId === team.id && p.connected)
-    if (member) return { teamId: team.id, playerId: member.id }
+    const members = teamMembers(players, team.id)
+    if (members.length > 0) return { teamId: team.id, playerId: members[0].id }
   }
   return { teamId: ordered[0]?.id ?? null, playerId: null }
 }
@@ -150,7 +159,11 @@ export async function markCorrect(
   })
 }
 
-export async function advanceLightningCard(session: Session): Promise<void> {
+export async function advanceLightningCard(
+  session: Session,
+  teams: Team[],
+  players: Player[],
+): Promise<void> {
   const nextIndex = session.deckIndex + 1
   const phaseComplete = nextIndex >= session.lightningDeck.length
   if (phaseComplete) {
@@ -162,12 +175,17 @@ export async function advanceLightningCard(session: Session): Promise<void> {
     })
     return
   }
+  // Hot-potato: each lightning card is attempted by the next team so points are
+  // spread fairly instead of one team taking the whole round.
+  const { teamId, playerId } = nextTeamAndPlayer(session, teams, players)
   const endsAt = new Date(serverNow() + session.config.lightningSeconds * 1000).toISOString()
   await patchSession(session.id, {
     deck_index: nextIndex,
     keyword_revealed: false,
     turn_active: true,
     turn_ends_at: endsAt,
+    current_team_id: teamId,
+    current_player_id: playerId,
   })
 }
 
@@ -186,14 +204,22 @@ export async function skipCard(session: Session): Promise<void> {
 }
 
 export async function endTurn(session: Session): Promise<void> {
-  // Time ran out: the turn ends but the round continues with the same queue for
-  // the next team. Round is only complete when the queue is empty.
-  const phaseComplete = isMainPhase(session.phase) && session.queue.length === 0
+  // Time ran out: the round continues with the same queue for the next team.
+  // The card in play (not guessed) goes to the back of the bowl so the next team
+  // doesn't get it handed to them right after hearing the clues.
+  const main = isMainPhase(session.phase)
+  let queue = session.queue
+  if (main && queue.length > 1) {
+    const [first, ...rest] = queue
+    queue = [...rest, first]
+  }
+  const phaseComplete = main && queue.length === 0
   await patchSession(session.id, {
     state: 'round_end',
     turn_active: false,
     turn_ends_at: null,
     phase_complete: phaseComplete,
+    ...(main ? { queue } : {}),
   })
 }
 
@@ -207,11 +233,24 @@ function nextTeamAndPlayer(
   const nextTeam = ordered[(curIdx + 1) % ordered.length] ?? ordered[0]
   if (!nextTeam) return { teamId: null, playerId: null }
 
-  const members = players.filter((p) => p.teamId === nextTeam.id && p.connected)
+  // Rotate players within the team using how many turns the team already took,
+  // so every member gets a turn in order (round-robin) and nobody is skipped.
+  const members = teamMembers(players, nextTeam.id)
   if (members.length === 0) return { teamId: nextTeam.id, playerId: null }
-  const lastPlayerIdx = members.findIndex((p) => p.id === session.currentPlayerId)
-  const nextPlayer = members[(lastPlayerIdx + 1) % members.length] ?? members[0]
+  const nextPlayer = members[nextTeam.turnsTaken % members.length]
   return { teamId: nextTeam.id, playerId: nextPlayer.id }
+}
+
+export function previewNextTurn(
+  session: Session,
+  teams: Team[],
+  players: Player[],
+): { teamId: string | null; playerId: string | null } {
+  const currentTeam = teams.find((t) => t.id === session.currentTeamId)
+  const bumpedTeams = currentTeam
+    ? teams.map((t) => (t.id === currentTeam.id ? { ...t, turnsTaken: t.turnsTaken + 1 } : t))
+    : teams
+  return nextTeamAndPlayer(session, bumpedTeams, players)
 }
 
 export async function nextTurn(
@@ -220,13 +259,18 @@ export async function nextTurn(
   players: Player[],
 ): Promise<void> {
   const currentTeam = teams.find((t) => t.id === session.currentTeamId)
+  // Reflect the just-finished team's incremented turn count locally so the next
+  // player is computed correctly (matters when there is a single team too).
+  const bumpedTeams = currentTeam
+    ? teams.map((t) => (t.id === currentTeam.id ? { ...t, turnsTaken: t.turnsTaken + 1 } : t))
+    : teams
   if (currentTeam) {
     await supabase
       .from('teams')
       .update({ turns_taken: currentTeam.turnsTaken + 1 })
       .eq('id', currentTeam.id)
   }
-  const { teamId, playerId } = nextTeamAndPlayer(session, teams, players)
+  const { teamId, playerId } = nextTeamAndPlayer(session, bumpedTeams, players)
   await patchSession(session.id, {
     state: 'countdown',
     current_team_id: teamId,
@@ -238,14 +282,37 @@ export async function nextTurn(
   })
 }
 
-export async function nextPhaseOrFinish(session: Session): Promise<void> {
+export async function nextPhaseOrFinish(
+  session: Session,
+  teams: Team[],
+  players: Player[],
+): Promise<void> {
   const idx = PHASE_ORDER.indexOf(session.phase)
   const next = PHASE_ORDER[idx + 1]
+
+  // Count the just-finished team's turn so efficiency stats are fair and the
+  // player rotation keeps advancing.
+  const currentTeam = teams.find((t) => t.id === session.currentTeamId)
+  if (currentTeam) {
+    await supabase
+      .from('teams')
+      .update({ turns_taken: currentTeam.turnsTaken + 1 })
+      .eq('id', currentTeam.id)
+  }
+
   if (!next) {
     const stats = computeHardest(session)
     await patchSession(session.id, { state: 'finished', turn_active: false, stats })
     return
   }
+
+  // Start each new round with the next team/player instead of repeating whoever
+  // guessed the last card of the previous round.
+  const bumpedTeams = currentTeam
+    ? teams.map((t) => (t.id === currentTeam.id ? { ...t, turnsTaken: t.turnsTaken + 1 } : t))
+    : teams
+  const { teamId, playerId } = nextTeamAndPlayer(session, bumpedTeams, players)
+
   await patchSession(session.id, {
     phase: next,
     round: phaseToRound(next),
@@ -256,6 +323,8 @@ export async function nextPhaseOrFinish(session: Session): Promise<void> {
     phase_complete: false,
     turn_active: false,
     turn_ends_at: null,
+    current_team_id: teamId,
+    current_player_id: playerId,
   })
 }
 

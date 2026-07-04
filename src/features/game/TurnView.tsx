@@ -73,8 +73,12 @@ export function TurnView() {
       handledEndsAt.current = turnEndsAt
       sound('timeup')
       haptic('fail')
-      if (isLightning(fresh.phase)) void game.advanceLightningCard(fresh)
-      else void game.endTurn(fresh)
+      if (isLightning(fresh.phase)) {
+        const { teams: t, players: p } = useSessionStore.getState()
+        void game.advanceLightningCard(fresh, t, p)
+      } else {
+        void game.endTurn(fresh)
+      }
     }
 
     if (isController) {
@@ -94,9 +98,9 @@ export function TurnView() {
     if (!isController && !isHost) return
     const delay = isController ? LIGHTNING_ADVANCE_MS : LIGHTNING_ADVANCE_MS + LIGHTNING_BACKUP_EXTRA_MS
     const t = window.setTimeout(() => {
-      const fresh = useSessionStore.getState().session
+      const { session: fresh, teams: t2, players: p2 } = useSessionStore.getState()
       if (fresh && fresh.phase === 'lightning' && fresh.keywordRevealed) {
-        void game.advanceLightningCard(fresh)
+        void game.advanceLightningCard(fresh, t2, p2)
       }
     }, delay)
     return () => window.clearTimeout(t)

@@ -4,6 +4,7 @@ import { Button } from '@/components/Button'
 import { ScoreBoard } from '@/features/score/ScoreBoard'
 import { useGameActions } from './useGameActions'
 import { nextPhase as computeNextPhase } from '@/lib/rules'
+import { previewNextTurn } from '@/services/gameService'
 
 export function RoundEnd() {
   const { session, teams, players, currentTeam, isHost, isController, nextTurn, nextPhase } = useGameActions()
@@ -13,9 +14,8 @@ export function RoundEnd() {
   const canAdvance = isHost || isController
   const meta = PHASE_META[session.phase]
   const upcoming = computeNextPhase(session.phase)
-  const nextPlayer = players.find(
-    (p) => p.teamId !== session.currentTeamId && p.connected,
-  )
+  const { playerId: nextPlayerId } = previewNextTurn(session, teams, players)
+  const nextPlayer = players.find((p) => p.id === nextPlayerId)
 
   return (
     <motion.div

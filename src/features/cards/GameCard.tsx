@@ -54,6 +54,20 @@ export function GameCard({ card, category, hidden = false }: GameCardProps) {
             )}
           </div>
 
+          {!hidden && (
+            <div className="relative mb-3 flex items-center justify-center gap-2 rounded-2xl border-2 border-rose-500/60 bg-rose-500/10 px-3 py-2">
+              <span className="text-base">🚫</span>
+              <div className="flex min-w-0 flex-col items-center leading-none">
+                <span className="text-[0.6rem] font-bold uppercase tracking-[0.25em] text-rose-300/80">
+                  No podés decir
+                </span>
+                <span className="mt-0.5 truncate font-display text-lg font-extrabold tracking-wide text-rose-100">
+                  {card.keyword}
+                </span>
+              </div>
+            </div>
+          )}
+
           <div className="relative flex items-center justify-center gap-1.5 opacity-70">
             {(['titles', 'characters', 'anything'] as Category[]).map((c) => (
               <span

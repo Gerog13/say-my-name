@@ -45,6 +45,7 @@ export interface PlayerRow {
   is_host: boolean
   correct_count: number
   last_seen: string
+  created_at: string
 }
 
 export function mapSession(r: SessionRow): Session {
@@ -97,5 +98,6 @@ export function mapPlayer(r: PlayerRow): Player {
     isHost: r.is_host,
     correctCount: r.correct_count,
     lastSeen: r.last_seen,
+    createdAt: r.created_at ?? '',
   }
 }
